@@ -69,6 +69,8 @@
             'limit_clause_style' => null, // if this is null, will be autodetected
             'logging' => false,
             'caching' => false,
+            'map_column_types' => false,
+            'date_column_types' => array('datetime')
         );
 
         // Database connection, instance of the PDO class
@@ -82,6 +84,8 @@
 
         // Query cache, only used if query caching is enabled
         protected static $_query_cache = array();
+
+        protected static $_driver;
 
         // --------------------------- //
         // --- INSTANCE PROPERTIES --- //
@@ -201,6 +205,7 @@
          */
         public static function set_db($db) {
             self::$_db = $db;
+            self::$_driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             self::_setup_identifier_quote_character();
             self::_setup_limit_clause_style();
         }
@@ -233,7 +238,7 @@
          * names, column names etc) by looking at the driver being used by PDO.
          */
         protected static function _detect_identifier_quote_character() {
-            switch(self::$_db->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+            switch(self::$_driver) {
                 case 'pgsql':
                 case 'sqlsrv':
                 case 'dblib':
@@ -253,7 +258,7 @@
          * versus grown up databases.
          */
         protected static function _detect_limit_clause_style() {
-            switch(self::$_db->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+            switch(self::$_driver) {
                 case 'sqlsrv':
                 case 'mssql':
                     return ORM::LIMIT_STYLE_TOP_N;
@@ -597,6 +602,13 @@
             if (!is_array($values)) {
                 $values = array($values);
             }
+
+            foreach($values as $idx => $value) {
+              if($values[$idx] instanceof DateTime) {
+                $values[$idx] = $values[$idx]->format("Y-m-d H:i:s");
+              }
+            }
+
             $this->_where_conditions[] = array(
                 self::WHERE_FRAGMENT => $fragment,
                 self::WHERE_VALUES => $values,
@@ -980,6 +992,28 @@
             self::$_query_cache[$cache_key] = $value;
         }
 
+        /** Attempt to map SQL data types returned from PDO to more PHP-native types. 
+          * Return a new (mapped) row. */
+        protected function _map_columns($meta, $row) {
+          $mapped = array();
+          foreach($meta as $i => $column) {
+            $name = $column['name'];
+            $value = $row[$name];
+            if ($this->_is_date_column($column)) {
+              $value = new DateTime($value);
+            }
+            
+            $mapped[$name] = $value;
+          }
+
+          return $mapped;
+        }
+
+        protected function _is_date_column($meta) {
+          $type = $meta[self::$_driver . ":decl_type"];
+          return in_array($type, self::$_config['date_column_types']);
+        }
+
         /**
          * Execute the SELECT query that has been built up by chaining methods
          * on this class. Return an array of rows as associative arrays.
@@ -1001,9 +1035,18 @@
             $statement = self::$_db->prepare($query);
             $statement->execute($this->_values);
 
+            $meta = array();
+            for($i=0; $i<$statement->columnCount(); $i++) {
+              $meta[] = $statement->getColumnMeta($i);
+            }
+
             $rows = array();
             while ($row = $statement->fetch(PDO::FETCH_ASSOC)) {
+              if(self::$_config['map_column_types']) {
+                $rows[] = $this->_map_columns($meta, $row);
+              } else {
                 $rows[] = $row;
+              }
             }
 
             if ($caching_enabled) {
