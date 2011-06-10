@@ -70,7 +70,7 @@
             'logging' => false,
             'caching' => false,
             'map_column_types' => false,
-            'date_column_types' => array('datetime')
+            'date_column_types' => array('datetime', 'date')
         );
 
         // Database connection, instance of the PDO class
@@ -1135,6 +1135,12 @@
                 $values[] = $this->id();
             } else { // INSERT
                 $query = $this->_build_insert();
+            }
+
+            foreach($values as $idx => $value) {
+              if($value instanceof DateTime) {
+                $values[$idx] = $value->format("Y-m-d H:i:s");
+              }
             }
 
             self::_log_query($query, $values);
